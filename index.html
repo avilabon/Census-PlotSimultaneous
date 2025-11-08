@@ -1,20 +1,21 @@
 <!doctype html>
 <html lang="ca">
 <head>
-  <base href="./">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MVP Cens d'ocells per parcel·les</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <base href="./">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <style>
     html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-    #app { display: grid; grid-template-columns: 1fr 380px; grid-template-rows: auto 1fr auto; height: 100%; }
-    header { grid-column: 1 / -1; padding: 10px 14px; border-bottom: 1px solid #e5e7eb; display: flex; gap: 12px; align-items: center; }
+    #app { display: grid; grid-template-columns: 1fr 420px; grid-template-rows: auto 1fr auto; height: 100%; }
+    header { grid-column: 1 / -1; padding: 10px 14px; border-bottom: 1px solid #e5e7eb; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     #map { height: 100%; }
     aside { border-left: 1px solid #e5e7eb; padding: 10px; overflow: auto; }
     .controls { display: flex; gap: 8px; flex-wrap: wrap; }
     .btn { padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; cursor: pointer; }
     .btn.primary { background: #111827; color: #fff; }
+    .btn.danger { background:#b91c1c; color:#fff; }
     .btn:disabled { opacity: .5; cursor: not-allowed; }
     label { display:block; font-size: 12px; color:#374151; margin-top: 8px; }
     input, select, textarea { width: 100%; padding: 8px; border: 1px solid #e5e7eb; border-radius: 8px; }
@@ -23,6 +24,7 @@
     .pill { display:inline-block; padding:2px 6px; border-radius:999px; background:#f3f4f6; font-size:12px; }
     footer { grid-column: 1 / -1; border-top: 1px solid #e5e7eb; padding: 8px 14px; font-size: 12px; color:#6b7280; }
     details { margin-top: 8px; }
+    .row-actions button { font-size:11px; padding:4px 6px; border-radius:8px; }
     .test-pass { color: #065f46; }
     .test-fail { color: #991b1b; }
   </style>
@@ -36,6 +38,8 @@
     <div class="controls">
       <button class="btn" id="btnLoadParcel">Carrega parcel·la</button>
       <button class="btn" id="btnClear">Neteja observacions</button>
+      <button class="btn danger" id="btnDeleteAllPoints">Esborra tots els punts</button>
+      <button class="btn" id="btnRemoveParcel">Treure parcel·la</button>
       <button class="btn" id="btnExportCSV">Exporta CSV</button>
       <button class="btn" id="btnExportGeoJSON">Exporta GeoJSON</button>
       <button class="btn primary" id="btnSubmit">Envia al servidor</button>
@@ -58,6 +62,7 @@
             <th>Lat</th>
             <th>Lng</th>
             <th>Fiabilitat</th>
+            <th>Accions</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -103,40 +108,35 @@
 <script>
 // --- Helpers de compatibilitat ---
 function uid(){
-  try {
-    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
-      return window.crypto.randomUUID();
-    }
-  } catch(e) { /* entorns sense crypto */ }
-  // Fallback sense dependències modernes
-  return (
-    Date.now().toString(36) + '-' +
-    Math.random().toString(36).slice(2, 10)
-  );
+  try { if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID(); } catch(e){}
+  return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
 }
-
-function nullSafe(v){
-  return (v === undefined || v === null) ? '' : v;
-}
+function nullSafe(v){ return (v === undefined || v === null) ? '' : v; }
 
 // --- Estat ---
 const state = {
   parcel: null, // L.GeoJSON layer
   parcelGeom: null, // GeoJSON geom
-  observations: (function(){
-    try { return JSON.parse(localStorage.getItem('observations') || '[]'); }
-    catch(e){ return []; }
-  })()
+  observations: (function(){ try { return JSON.parse(localStorage.getItem('observations')||'[]'); } catch(e){ return []; } })(),
+  markers: {} // id -> Leaflet layer
 };
 
 const map = L.map('map');
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
 map.setView([41.387, 2.170], 12);
 
-function fmtTime(ts){
-  const d = new Date(ts);
-  try { return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}); }
-  catch(e){ return d.toTimeString().slice(0,8); }
+function fmtTime(ts){ const d = new Date(ts); try { return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}); } catch(e){ return d.toTimeString().slice(0,8); } }
+
+function renderRow(o){
+  const tr = document.createElement('tr');
+  tr.innerHTML = '<td>'+fmtTime(o.timestamp)+'</td>'+
+                 '<td>'+ (o.species || '') +'</td>'+
+                 '<td>'+ (o.count || '') +'</td>'+
+                 '<td>'+ o.lat.toFixed(5) +'</td>'+
+                 '<td>'+ o.lng.toFixed(5) +'</td>'+
+                 '<td>'+ (o.confidence || '') +'</td>'+
+                 '<td class="row-actions">\n                   <button data-action="zoom" data-id="'+o.id+'">Zoom</button>\n                   <button data-action="delete" data-id="'+o.id+'" class="btn danger">Elimina</button>\n                 </td>';
+  return tr;
 }
 
 function refreshTable(){
@@ -144,28 +144,28 @@ function refreshTable(){
   tbody.innerHTML = '';
   for (var i=0; i<state.observations.length; i++){
     var o = state.observations[i];
-    const tr = document.createElement('tr');
-    tr.innerHTML = '<td>'+fmtTime(o.timestamp)+'</td>'+
-                   '<td>'+ (o.species || '') +'</td>'+
-                   '<td>'+ (o.count || '') +'</td>'+
-                   '<td>'+ o.lat.toFixed(5) +'</td>'+
-                   '<td>'+ o.lng.toFixed(5) +'</td>'+
-                   '<td>'+ (o.confidence || '') +'</td>';
-    tbody.appendChild(tr);
+    tbody.appendChild(renderRow(o));
   }
   document.getElementById('obsCount').textContent = state.observations.length + ' registres';
   try { localStorage.setItem('observations', JSON.stringify(state.observations)); } catch(e){}
 }
 
+document.querySelector('#obsTable').addEventListener('click', function(ev){
+  var t = ev.target; var id = t.getAttribute('data-id'); var act = t.getAttribute('data-action');
+  if (!id || !act) return;
+  if (act === 'delete') {
+    removeObservationById(id);
+  } else if (act === 'zoom') {
+    var m = state.markers[id]; if (m) { map.setView(m.getLatLng(), Math.max(map.getZoom(), 16)); m.openTooltip(); }
+  }
+});
+
 function insideParcel(latlng){
   if(!state.parcelGeom) return true; // si no hi ha parcel·la, permetre
-  // punt dins de polígon (ray casting)
   function pointInPoly(point, vs){
-    const x = point[0], y = point[1];
-    let inside = false;
+    const x = point[0], y = point[1]; let inside = false;
     for (let i=0, j=vs.length-1; i<vs.length; j=i++){
-      const xi = vs[i][0], yi = vs[i][1];
-      const xj = vs[j][0], yj = vs[j][1];
+      const xi = vs[i][0], yi = vs[i][1]; const xj = vs[j][0], yj = vs[j][1];
       const intersect = ((yi>y)!==(yj>y)) && (x < (xj-xi)*(y-yi)/(yj-yi)+xi);
       if (intersect) inside = !inside;
     }
@@ -184,14 +184,13 @@ function insideParcel(latlng){
 }
 
 function addObservation(latlng){
-  // formulari emergent
   const speciesOptions = (document.getElementById('speciesList').value||'').split(',').map(function(s){return s.trim();}).filter(function(x){return !!x;});
   const speciesSelect = speciesOptions.length ? '<label>Espècie<select id="fSpecies">'+ speciesOptions.map(function(s){return '<option>'+s+'</option>';}).join('') +'</select></label>' : '<label>Espècie<input id="fSpeciesInput" placeholder="Espècie" /></label>';
 
   const popup = L.popup({offset: [0,-10]})
     .setLatLng(latlng)
     .setContent(
-      '<div style="min-width:240px">'+
+      '<div style="min-width:260px">'+
         speciesSelect+
         '<label>N individus<input id="fCount" type="number" min="1" step="1" value="1"/></label>'+
         '<label>Distància estimada (m)<input id="fDistance" type="number" min="0" step="1"/></label>'+
@@ -212,8 +211,9 @@ function addObservation(latlng){
       const observerId = document.getElementById('observerId').value||null;
       const parcelId = document.getElementById('parcelId').value||null;
       const species = speciesOptions.length ? document.getElementById('fSpecies').value : document.getElementById('fSpeciesInput').value;
+      const id = uid();
       const o = {
-        id: uid(),
+        id: id,
         observerId: observerId,
         parcelId: parcelId,
         species: species || null,
@@ -229,22 +229,46 @@ function addObservation(latlng){
         device: navigator.userAgent
       };
       state.observations.push(o);
-      L.circleMarker(latlng, {radius:6}).addTo(map).bindTooltip((o.species||'sp.') + ' (' + (o.count||1) + ')');
+      const marker = L.circleMarker(latlng, {radius:6}).addTo(map).bindTooltip((o.species||'sp.') + ' (' + (o.count||1) + ')');
+      marker.on('click', function(){
+        if (confirm('Vols eliminar aquest punt?')) removeObservationById(id);
+      });
+      state.markers[id] = marker;
       refreshTable();
       map.closePopup(popup);
     };
   }, 0);
 }
 
-map.on('click', function(e){
-  if(state.parcelGeom && !insideParcel(e.latlng)){
-    alert("El punt ha d'estar dins de la parcel·la.");
-    return;
-  }
-  addObservation(e.latlng);
-});
+function removeObservationById(id){
+  // treu de l'estat
+  const idx = state.observations.findIndex(function(x){ return x.id === id; });
+  if (idx !== -1) state.observations.splice(idx,1);
+  // treu marcador
+  const m = state.markers[id]; if (m){ map.removeLayer(m); delete state.markers[id]; }
+  refreshTable();
+}
 
-// --- Parcel·la demo per defecte ---
+function clearAllObservations(){
+  Object.keys(state.markers).forEach(function(id){ map.removeLayer(state.markers[id]); });
+  state.markers = {};
+  state.observations = [];
+  refreshTable();
+}
+
+function drawParcel(feature){
+  if(state.parcel){ map.removeLayer(state.parcel); }
+  state.parcelGeom = feature.geometry;
+  state.parcel = L.geoJSON(feature, {style:{color:'#2563eb', weight:2, fillOpacity:0.05}}).addTo(map);
+  try { map.fitBounds(state.parcel.getBounds(), {padding:[20,20]}); } catch(e){}
+}
+
+function removeParcel(){
+  if (state.parcel){ map.removeLayer(state.parcel); state.parcel = null; }
+  state.parcelGeom = null; // sense parcel·la, es permet clicar arreu
+}
+
+// --- Parcel·la demo per defecte (es pot treure amb el botó) ---
 const demoParcel = {
   "type":"Feature",
   "properties":{"name":"DEMO"},
@@ -253,22 +277,32 @@ const demoParcel = {
   ]]}
 };
 
-function drawParcel(feature){
-  if(state.parcel){ map.removeLayer(state.parcel); }
-  state.parcelGeom = feature.geometry;
-  state.parcel = L.geoJSON(feature, {style:{color:'#2563eb', weight:2, fillOpacity:0.05}}).addTo(map);
-  try { map.fitBounds(state.parcel.getBounds(), {padding:[20,20]}); } catch(e){ /* ignore */ }
-}
-
 drawParcel(demoParcel);
 
-// --- Botons ---
+// --- Interacció mapa ---
+map.on('click', function(e){
+  if(state.parcelGeom && !insideParcel(e.latlng)){
+    alert("El punt ha d'estar dins de la parcel·la.");
+    return;
+  }
+  addObservation(e.latlng);
+});
 
+// --- Botons ---
 document.getElementById('btnClear').onclick = function(){
   if(!confirm('Segur que vols esborrar totes les observacions locals?')) return;
-  state.observations = [];
-  refreshTable();
+  clearAllObservations();
   location.reload();
+};
+
+document.getElementById('btnDeleteAllPoints').onclick = function(){
+  if(!confirm('Vols eliminar TOTS els punts d\'espècies?')) return;
+  clearAllObservations();
+};
+
+document.getElementById('btnRemoveParcel').onclick = function(){
+  if(!confirm('Treure la parcel·la actual?')) return;
+  removeParcel();
 };
 
 function toCSV(rows){
@@ -281,222 +315,91 @@ function toCSV(rows){
 function download(filename, content, mime){
   try{
     const blob = new Blob([content], {type:mime||'application/octet-stream'});
-    if (navigator.msSaveOrOpenBlob) { // IE/Edge legacy
-      navigator.msSaveOrOpenBlob(blob, filename);
-      return true;
-    }
+    if (navigator.msSaveOrOpenBlob) { navigator.msSaveOrOpenBlob(blob, filename); return true; }
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.style.display = 'none';
-    a.href = url;
-    a.setAttribute('download', filename);
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(function(){
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 0);
+    const a = document.createElement('a'); a.style.display='none'; a.href = url; a.setAttribute('download', filename);
+    document.body.appendChild(a); a.click(); setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
     return true;
   } catch (err){
-    // Fallback 1: intenta copiar al porta-retalls
-    try{
-      const text = (typeof content === 'string') ? content : String(content);
-      if (navigator.clipboard && navigator.clipboard.writeText){
-        navigator.clipboard.writeText(text).then(function(){
-          alert('No s\'ha pogut descarregar. El fitxer s\'ha COPIAT al porta-retalls. Enganxa-ho a un editor i desa-ho com a '+filename);
-        });
-        return false;
-      }
-    } catch(_){/* ignore */}
-    // Fallback 2: obre en una pestanya nova perquè l\'usuari el pugui desar manualment
-    const win = window.open('', '_blank');
-    if (win) {
-      win.document.open();
-      const escaped = String(content).replace(/[&<>]/g, function(s){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[s]; });
-      win.document.write('<pre>'+escaped+'</pre>');
-      win.document.close();
-      alert('No s\'ha pogut descarregar automàticament. S\'ha obert en una pestanya nova: desa-ho manualment amb Ctrl/Cmd+S com "'+filename+'".');
-    } else {
-      alert('No s\'ha pogut exportar. Comprova si el navegador bloqueja baixades o emergents.');
-    }
-    return false;
+    try{ const text = (typeof content === 'string') ? content : String(content); if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(function(){ alert('No s\'ha pogut descarregar. Copiat al porta-retalls. Desa-ho com a '+filename); }); return false; } } catch(_){ }
+    const win = window.open('', '_blank'); if (win) { win.document.open(); const escaped = String(content).replace(/[&<>]/g, function(s){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[s]; }); win.document.write('<pre>'+escaped+'</pre>'); win.document.close(); alert('S\'ha obert en una pestanya nova. Desa-ho manualment com "'+filename+'".'); } else { alert('No s\'ha pogut exportar. Comprova bloqueig de baixades o emergents.'); } return false;
   }
 }
 
-document.getElementById('btnExportCSV').onclick = function(){
-  if(state.observations.length===0) return alert('No hi ha dades.');
-  download('cens_'+ new Date().toISOString().slice(0,10) + '.csv', toCSV(state.observations), 'text/csv');
-};
+document.getElementById('btnExportCSV').onclick = function(){ if(state.observations.length===0) return alert('No hi ha dades.'); download('cens_'+ new Date().toISOString().slice(0,10) + '.csv', toCSV(state.observations), 'text/csv'); };
 
-document.getElementById('btnExportGeoJSON').onclick = function(){
-  const fc = { type:'FeatureCollection', features: state.observations.map(function(o){return ({
-    type:'Feature', properties:Object.assign({}, o), geometry:{ type:'Point', coordinates:[o.lng,o.lat] }
-  });}) };
-  download('cens_'+ new Date().toISOString().slice(0,10) + '.geojson', JSON.stringify(fc), 'application/geo+json');
-};
+document.getElementById('btnExportGeoJSON').onclick = function(){ const fc = { type:'FeatureCollection', features: state.observations.map(function(o){return ({ type:'Feature', properties:Object.assign({}, o), geometry:{ type:'Point', coordinates:[o.lng,o.lat] } });}) }; download('cens_'+ new Date().toISOString().slice(0,10) + '.geojson', JSON.stringify(fc), 'application/geo+json'); };
 
 // Enviament a servidor (POST JSON)
 document.getElementById('btnSubmit').onclick = function(){
   (async function(){
     const endpoint = (document.getElementById('endpoint').value||'').trim();
     if(!endpoint) { alert("Cal indicar un endpoint d'enviament."); return; }
-    const payload = {
-      meta: {
-        schema: 'bird-census.v1',
-        submitted_at: new Date().toISOString(),
-        app: 'mvp-leaflet'
-      },
-      parcel: state.parcelGeom,
-      observations: state.observations
-    };
-    try{
-      document.getElementById('status').textContent = 'Enviant…';
-      const res = await fetch(endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-      if(!res.ok) throw new Error('Error '+res.status);
-      document.getElementById('status').textContent = 'Dades enviades ✅';
-    } catch(err){
-      document.getElementById('status').textContent = "Error d'enviament";
-      alert("No s'ha pogut enviar: "+ err.message);
-    }
+    const payload = { meta:{ schema:'bird-census.v1', submitted_at:new Date().toISOString(), app:'mvp-leaflet' }, parcel: state.parcelGeom, observations: state.observations };
+    try{ document.getElementById('status').textContent = 'Enviant…'; const res = await fetch(endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)}); if(!res.ok) throw new Error('Error '+res.status); document.getElementById('status').textContent = 'Dades enviades ✅'; }
+    catch(err){ document.getElementById('status').textContent = "Error d'enviament"; alert("No s'ha pogut enviar: "+ err.message); }
   })();
 };
 
 // Carrega parcel·la des de textarea
 const applyGeo = function(){
-  const txt = (document.getElementById('geojsonInput').value||'').trim();
-  if(!txt) { alert('Enganxa el GeoJSON de la parcel·la.'); return; }
-  let feat = null;
-  try{
-    const obj = JSON.parse(txt);
-    feat = obj.type === 'Feature' ? obj : {type:'Feature', properties:{}, geometry: obj};
-    if(!feat.geometry || (['Polygon','MultiPolygon'].indexOf(feat.geometry.type) === -1)) throw new Error('Ha de ser Polygon o MultiPolygon');
-  }catch(e){
-    alert('GeoJSON no vàlid: '+e.message); return;
-  }
+  const txt = (document.getElementById('geojsonInput').value||'').trim(); if(!txt) { alert('Enganxa el GeoJSON de la parcel·la.'); return; }
+  let feat = null; try{ const obj = JSON.parse(txt); feat = obj.type === 'Feature' ? obj : {type:'Feature', properties:{}, geometry: obj}; if(!feat.geometry || (['Polygon','MultiPolygon'].indexOf(feat.geometry.type) === -1)) throw new Error('Ha de ser Polygon o MultiPolygon'); } catch(e){ alert('GeoJSON no vàlid: '+e.message); return; }
   drawParcel(feat);
 };
 
 document.getElementById('btnApplyGeoJSON').onclick = applyGeo;
 
-document.getElementById('btnLoadParcel').onclick = function(){
-  var sec = Array.prototype.find.call(document.querySelectorAll('details'), function(d){ return d.querySelector('#geojsonInput'); });
-  if (sec) { sec.open = true; }
-  document.getElementById('geojsonInput').focus();
-};
+document.getElementById('btnLoadParcel').onclick = function(){ var sec = Array.prototype.find.call(document.querySelectorAll('details'), function(d){ return d.querySelector('#geojsonInput'); }); if (sec) { sec.open = true; } document.getElementById('geojsonInput').focus(); };
 
 // Inicialitza taula
 refreshTable();
 
-// --- TESTS senzills (no canviar tests existents; s'afegeixen si no n'hi ha) ---
+// --- TESTS (no es toquen els existents; s'afegeixen més) ---
 (function runTests(){
   const out = document.getElementById('testOutput');
-  function log(ok, msg){
-    const el = document.createElement('div');
-    el.className = ok ? 'test-pass' : 'test-fail';
-    el.textContent = (ok ? '✓ ' : '✗ ') + msg;
-    out.appendChild(el);
-  }
-
-  // Test UID
+  function log(ok, msg){ const el = document.createElement('div'); el.className = ok ? 'test-pass' : 'test-fail'; el.textContent = (ok ? '✓ ' : '✗ ') + msg; out.appendChild(el); }
+  try{ const a = uid(); const b = uid(); log(a !== b && typeof a === 'string' && a.length > 5, 'uid() genera identificadors aparentment únics'); } catch(e){ log(false, 'uid() ha fallat: '+e.message); }
+  try{ const csv = toCSV([{observerId:'OBS', parcelId:'PAR', species:'sp', count:1, distance_m:10, bearing_deg:90, confidence:'segur', notes:'-', lat:1.1, lng:2.2, timestamp:123, crs:'EPSG:4326', device:'test'}]); log(/observerId/.test(csv) && /"sp"/.test(csv), 'toCSV() exporta capçalera i valors'); } catch(e){ log(false, 'toCSV() ha fallat: '+e.message); }
+  try{ const center = state.parcel.getBounds().getCenter(); log(insideParcel(center) === true, 'insideParcel() retorna true dins la parcel·la DEMO'); } catch(e){ log(false, 'insideParcel() ha fallat: '+e.message); }
+  // TESTS nous
   try{
-    const a = uid(); const b = uid();
-    log(a !== b && typeof a === 'string' && a.length > 5, 'uid() genera identificadors aparentment únics');
-  } catch(e){ log(false, 'uid() ha fallat: '+e.message); }
-
-  // Test CSV
-  try{
-    const csv = toCSV([{observerId:'OBS', parcelId:'PAR', species:'sp', count:1, distance_m:10, bearing_deg:90, confidence:'segur', notes:'-', lat:1.1, lng:2.2, timestamp:123, crs:'EPSG:4326', device:'test'}]);
-    log(/observerId/.test(csv) && /"sp"/.test(csv), 'toCSV() exporta capçalera i valors');
-  } catch(e){ log(false, 'toCSV() ha fallat: '+e.message); }
-
-  // Test insideParcel
-  try{
-    const center = state.parcel.getBounds().getCenter();
-    log(insideParcel(center) === true, 'insideParcel() retorna true dins la parcel·la DEMO');
-  } catch(e){ log(false, 'insideParcel() ha fallat: '+e.message); }
+    const before = state.observations.length;
+    const pt = L.latLng(41.3875, 2.167);
+    const id = uid();
+    const o = { id, lat:pt.lat, lng:pt.lng, timestamp:Date.now() };
+    state.observations.push(o);
+    state.markers[id] = L.circleMarker(pt, {radius:4}).addTo(map);
+    removeObservationById(id);
+    log(state.observations.length === before && !state.markers[id], 'removeObservationById() elimina de taula i mapa');
+  } catch(e){ log(false, 'removeObservationById() ha fallat: '+e.message); }
 })();
-// --- PWA: Service Worker (auto-registrat, amb fallback Blob) ---
+
+// --- PWA: Service Worker (auto-registrat; usa sw.js si existeix, sinó fallback blob) ---
 (function registerSW(){
   if (!('serviceWorker' in navigator)) return;
-  // Primer intent: sw.js si existeix al servidor
   navigator.serviceWorker.register('sw.js').catch(function(){
-    // Fallback: crea i registra un SW des d'un Blob perquè funcioni en proves
     var swCode = `
       const CACHE = 'birdcensus-cache-v1';
       self.addEventListener('install', (e) => {
         self.skipWaiting();
-        e.waitUntil((async()=>{
-          const c = await caches.open(CACHE);
-          try { await c.addAll(['./','./index.html']); } catch(_){}
-        })());
+        e.waitUntil((async()=>{ const c = await caches.open(CACHE); try { await c.addAll(['./','./index.html']); } catch(_){} })());
       });
-      self.addEventListener('activate', (e)=>{
-        e.waitUntil((async()=>{
-          const keys = await caches.keys();
-          await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));
-          self.clients.claim();
-        })());
-      });
+      self.addEventListener('activate', (e)=>{ e.waitUntil((async()=>{ const keys = await caches.keys(); await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))); self.clients.claim(); })()); });
       self.addEventListener('fetch', (e)=>{
-        const req = e.request;
-        if (req.method !== 'GET') return;
-        e.respondWith((async()=>{
-          const cache = await caches.open(CACHE);
-          const cached = await cache.match(req);
-          if (cached) return cached;
-          try {
-            const res = await fetch(req);
-            if (res && res.status===200 && res.type==='basic') cache.put(req, res.clone());
-            return res;
-          } catch(err){
-            return cached || Response.error();
-          }
-        })());
+        const req = e.request; if (req.method !== 'GET') return;
+        e.respondWith((async()=>{ const cache = await caches.open(CACHE); const cached = await cache.match(req); if (cached) return cached; try { const res = await fetch(req); if (res && res.status===200 && res.type==='basic') cache.put(req, res.clone()); return res; } catch(err){ return cached || Response.error(); } })());
       });
     `;
     var blob = new Blob([swCode], {type: 'text/javascript'});
     var url = URL.createObjectURL(blob);
-    navigator.serviceWorker.register(url).catch(function(err){
-      console.warn('No s\'ha registrat el Service Worker:', err);
-    });
+    navigator.serviceWorker.register(url).catch(function(err){ console.warn('No s\'ha registrat el Service Worker:', err); });
   });
 })();
 
-// --- PWA: avis informatiu si el manifest falta ---
-(function ensureManifest(){
-  var hasManifest = !!document.querySelector('link[rel="manifest"]');
-  if (!hasManifest) return;
-  fetch(document.querySelector('link[rel="manifest"]').href).catch(function(){
-    console.info('%cPer a instal·lar com PWA, crea un fitxer manifest.webmanifest al mateix directori amb el contingut recomanat (mostrat a continuació).', 'color:#2563eb');
-    console.info(`{
-  "name": "Cens d'ocells",
-  "short_name": "Censos",
-  "start_url": ".",
-  "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#111827",
-  "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
-  ]
-}`);
-  });
-})();
+(function ensureManifest(){ var link = document.querySelector('link[rel="manifest"]'); if (!link) return; fetch(link.href).catch(function(){ console.info('%cAfegeix manifest.webmanifest (exemple loguejat).', 'color:#2563eb'); }); })();
 
-// --- TEST addicional PWA ---
-(function testPWA(){
-  var out = document.getElementById('testOutput'); if (!out) return;
-  function log(ok, msg){
-    var el = document.createElement('div');
-    el.className = ok ? 'test-pass' : 'test-fail';
-    el.textContent = (ok ? '✓ ' : '✗ ') + msg;
-    out.appendChild(el);
-  }
-  try{
-    log('serviceWorker' in navigator, 'El navegador suporta Service Worker');
-  }catch(e){ log(false, 'Service Worker test ha fallat: '+e.message); }
-})();
+(function testPWA(){ var out = document.getElementById('testOutput'); if (!out) return; function log(ok, msg){ var el = document.createElement('div'); el.className = ok ? 'test-pass' : 'test-fail'; el.textContent = (ok ? '✓ ' : '✗ ') + msg; out.appendChild(el); } try{ log('serviceWorker' in navigator, 'El navegador suporta Service Worker'); }catch(e){ log(false, 'Service Worker test ha fallat: '+e.message); } })();
 </script>
 </body>
 </html>
-
