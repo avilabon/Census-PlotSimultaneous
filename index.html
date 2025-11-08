@@ -1,15 +1,11 @@
 <!doctype html>
 <html lang="ca">
 <head>
+  <base href="./">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MVP Cens d'ocells per parcel·les</title>
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-    crossorigin=""
-  />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <style>
     html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
     #app { display: grid; grid-template-columns: 1fr 380px; grid-template-rows: auto 1fr auto; height: 100%; }
@@ -87,7 +83,7 @@
     <details>
       <summary>Carrega parcel·la (GeoJSON)</summary>
       <label>Enganxa GeoJSON (Polygon o MultiPolygon)
-        <textarea id="geojsonInput" rows="6" placeholder='{"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[...] ]}}'></textarea>
+        <textarea id="geojsonInput" rows="6" placeholder='{"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[...]]}}'></textarea>
       </label>
       <button class="btn" id="btnApplyGeoJSON">Dibuixa</button>
     </details>
@@ -103,7 +99,7 @@
   </footer>
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 // --- Helpers de compatibilitat ---
 function uid(){
@@ -112,6 +108,7 @@ function uid(){
       return window.crypto.randomUUID();
     }
   } catch(e) { /* entorns sense crypto */ }
+  // Fallback sense dependències modernes
   return (
     Date.now().toString(36) + '-' +
     Math.random().toString(36).slice(2, 10)
@@ -124,8 +121,8 @@ function nullSafe(v){
 
 // --- Estat ---
 const state = {
-  parcel: null,
-  parcelGeom: null,
+  parcel: null, // L.GeoJSON layer
+  parcelGeom: null, // GeoJSON geom
   observations: (function(){
     try { return JSON.parse(localStorage.getItem('observations') || '[]'); }
     catch(e){ return []; }
@@ -161,7 +158,8 @@ function refreshTable(){
 }
 
 function insideParcel(latlng){
-  if(!state.parcelGeom) return true;
+  if(!state.parcelGeom) return true; // si no hi ha parcel·la, permetre
+  // punt dins de polígon (ray casting)
   function pointInPoly(point, vs){
     const x = point[0], y = point[1];
     let inside = false;
@@ -186,6 +184,7 @@ function insideParcel(latlng){
 }
 
 function addObservation(latlng){
+  // formulari emergent
   const speciesOptions = (document.getElementById('speciesList').value||'').split(',').map(function(s){return s.trim();}).filter(function(x){return !!x;});
   const speciesSelect = speciesOptions.length ? '<label>Espècie<select id="fSpecies">'+ speciesOptions.map(function(s){return '<option>'+s+'</option>';}).join('') +'</select></label>' : '<label>Espècie<input id="fSpeciesInput" placeholder="Espècie" /></label>';
 
@@ -264,6 +263,7 @@ function drawParcel(feature){
 drawParcel(demoParcel);
 
 // --- Botons ---
+
 document.getElementById('btnClear').onclick = function(){
   if(!confirm('Segur que vols esborrar totes les observacions locals?')) return;
   state.observations = [];
@@ -281,7 +281,7 @@ function toCSV(rows){
 function download(filename, content, mime){
   try{
     const blob = new Blob([content], {type:mime||'application/octet-stream'});
-    if (navigator.msSaveOrOpenBlob) {
+    if (navigator.msSaveOrOpenBlob) { // IE/Edge legacy
       navigator.msSaveOrOpenBlob(blob, filename);
       return true;
     }
@@ -298,24 +298,26 @@ function download(filename, content, mime){
     }, 0);
     return true;
   } catch (err){
+    // Fallback 1: intenta copiar al porta-retalls
     try{
       const text = (typeof content === 'string') ? content : String(content);
       if (navigator.clipboard && navigator.clipboard.writeText){
         navigator.clipboard.writeText(text).then(function(){
-          alert('No s\'ha pogut descarregar. Copiat al porta-retalls. Desa-ho com a '+filename);
+          alert('No s\'ha pogut descarregar. El fitxer s\'ha COPIAT al porta-retalls. Enganxa-ho a un editor i desa-ho com a '+filename);
         });
         return false;
       }
-    } catch(_){}
+    } catch(_){/* ignore */}
+    // Fallback 2: obre en una pestanya nova perquè l\'usuari el pugui desar manualment
     const win = window.open('', '_blank');
     if (win) {
       win.document.open();
       const escaped = String(content).replace(/[&<>]/g, function(s){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[s]; });
       win.document.write('<pre>'+escaped+'</pre>');
       win.document.close();
-      alert('S\'ha obert en una pestanya nova. Desa-ho manualment com "'+filename+'".');
+      alert('No s\'ha pogut descarregar automàticament. S\'ha obert en una pestanya nova: desa-ho manualment amb Ctrl/Cmd+S com "'+filename+'".');
     } else {
-      alert('No s\'ha pogut exportar. Comprova bloqueig de baixades o emergents.');
+      alert('No s\'ha pogut exportar. Comprova si el navegador bloqueja baixades o emergents.');
     }
     return false;
   }
@@ -333,12 +335,17 @@ document.getElementById('btnExportGeoJSON').onclick = function(){
   download('cens_'+ new Date().toISOString().slice(0,10) + '.geojson', JSON.stringify(fc), 'application/geo+json');
 };
 
+// Enviament a servidor (POST JSON)
 document.getElementById('btnSubmit').onclick = function(){
   (async function(){
     const endpoint = (document.getElementById('endpoint').value||'').trim();
     if(!endpoint) { alert("Cal indicar un endpoint d'enviament."); return; }
     const payload = {
-      meta: { schema: 'bird-census.v1', submitted_at: new Date().toISOString(), app: 'mvp-leaflet' },
+      meta: {
+        schema: 'bird-census.v1',
+        submitted_at: new Date().toISOString(),
+        app: 'mvp-leaflet'
+      },
       parcel: state.parcelGeom,
       observations: state.observations
     };
@@ -354,6 +361,7 @@ document.getElementById('btnSubmit').onclick = function(){
   })();
 };
 
+// Carrega parcel·la des de textarea
 const applyGeo = function(){
   const txt = (document.getElementById('geojsonInput').value||'').trim();
   if(!txt) { alert('Enganxa el GeoJSON de la parcel·la.'); return; }
@@ -367,6 +375,7 @@ const applyGeo = function(){
   }
   drawParcel(feat);
 };
+
 document.getElementById('btnApplyGeoJSON').onclick = applyGeo;
 
 document.getElementById('btnLoadParcel').onclick = function(){
@@ -375,9 +384,10 @@ document.getElementById('btnLoadParcel').onclick = function(){
   document.getElementById('geojsonInput').focus();
 };
 
+// Inicialitza taula
 refreshTable();
 
-// --- TESTS senzills ---
+// --- TESTS senzills (no canviar tests existents; s'afegeixen si no n'hi ha) ---
 (function runTests(){
   const out = document.getElementById('testOutput');
   function log(ok, msg){
@@ -386,26 +396,31 @@ refreshTable();
     el.textContent = (ok ? '✓ ' : '✗ ') + msg;
     out.appendChild(el);
   }
+
+  // Test UID
   try{
     const a = uid(); const b = uid();
     log(a !== b && typeof a === 'string' && a.length > 5, 'uid() genera identificadors aparentment únics');
   } catch(e){ log(false, 'uid() ha fallat: '+e.message); }
 
+  // Test CSV
   try{
     const csv = toCSV([{observerId:'OBS', parcelId:'PAR', species:'sp', count:1, distance_m:10, bearing_deg:90, confidence:'segur', notes:'-', lat:1.1, lng:2.2, timestamp:123, crs:'EPSG:4326', device:'test'}]);
     log(/observerId/.test(csv) && /"sp"/.test(csv), 'toCSV() exporta capçalera i valors');
   } catch(e){ log(false, 'toCSV() ha fallat: '+e.message); }
 
+  // Test insideParcel
   try{
     const center = state.parcel.getBounds().getCenter();
     log(insideParcel(center) === true, 'insideParcel() retorna true dins la parcel·la DEMO');
   } catch(e){ log(false, 'insideParcel() ha fallat: '+e.message); }
 })();
-
-// --- PWA: Service Worker ---
+// --- PWA: Service Worker (auto-registrat, amb fallback Blob) ---
 (function registerSW(){
   if (!('serviceWorker' in navigator)) return;
+  // Primer intent: sw.js si existeix al servidor
   navigator.serviceWorker.register('sw.js').catch(function(){
+    // Fallback: crea i registra un SW des d'un Blob perquè funcioni en proves
     var swCode = `
       const CACHE = 'birdcensus-cache-v1';
       self.addEventListener('install', (e) => {
@@ -447,11 +462,12 @@ refreshTable();
   });
 })();
 
+// --- PWA: avis informatiu si el manifest falta ---
 (function ensureManifest(){
-  var link = document.querySelector('link[rel="manifest"]');
-  if (!link) return;
-  fetch(link.href).catch(function(){
-    console.info('%cPer a instal·lar com PWA, crea manifest.webmanifest (s'ha loguejat un exemple).', 'color:#2563eb');
+  var hasManifest = !!document.querySelector('link[rel="manifest"]');
+  if (!hasManifest) return;
+  fetch(document.querySelector('link[rel="manifest"]').href).catch(function(){
+    console.info('%cPer a instal·lar com PWA, crea un fitxer manifest.webmanifest al mateix directori amb el contingut recomanat (mostrat a continuació).', 'color:#2563eb');
     console.info(`{
   "name": "Cens d'ocells",
   "short_name": "Censos",
@@ -467,6 +483,7 @@ refreshTable();
   });
 })();
 
+// --- TEST addicional PWA ---
 (function testPWA(){
   var out = document.getElementById('testOutput'); if (!out) return;
   function log(ok, msg){
@@ -482,3 +499,4 @@ refreshTable();
 </script>
 </body>
 </html>
+
