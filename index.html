@@ -16,7 +16,14 @@
     .btn.danger { background:#b91c1c; color:#fff; }
     .icon { font-size: 18px; line-height: 1; }
     .pill { display:inline-block; padding:2px 6px; border-radius:999px; background:#f3f4f6; font-size:12px; margin-left:auto; }
-    #map { height: 100%; width: 100%; }
+    #map { height: 100%; width: 100%; position: relative; z-index: 0; }
+.leaflet-container { z-index: 0; }
+/* Drawer per sobre del mapa */
+aside { z-index: 10010; }
+/* Fons per bloquejar interacció amb mapa quan el panell és obert */
+#backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.15); backdrop-filter: blur(1px); z-index: 10000; display: none; }
+.panel-open #backdrop { display: block; }
+.panel-open #map { pointer-events: none; }
     aside { position: fixed; inset: 0 0 auto auto; width: 92vw; max-width: 440px; height: 100dvh; background:#fff; border-left:1px solid var(--border); box-shadow: -8px 0 24px rgba(0,0,0,.08); transform: translateX(100%); transition: transform .25s ease; display:flex; flex-direction:column; }
     aside.open { transform: translateX(0); }
     aside header { padding: 10px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
@@ -55,6 +62,8 @@
   </header>
 
   <div id="map"></div>
+
+  <div id="backdrop" aria-hidden="true"></div>
 
   <aside id="panel">
     <header>
@@ -280,12 +289,39 @@ async function prefetchTiles(){
 map.on('click', function(e){ if(state.parcelGeom && !insideParcel(e.latlng)){ alert("El punt ha d'estar dins de la parcel·la."); return; } addObservation(e.latlng); });
 
 // --- Botons & panell ---
-document.getElementById('btnTogglePanel').onclick = function(){ document.getElementById('panel').classList.add('open'); };
-(document.getElementById('btnClosePanel')).onclick = function(){ document.getElementById('panel').classList.remove('open'); };
+document.getElementById('btnTogglePanel').onclick = function(){ document.getElementById('panel').classList.add('open'); document.body.classList.add('panel-open'); };
+(document.getElementById('btnClosePanel')).onclick = function(){ document.getElementById('panel').classList.remove('open'); document.body.classList.remove('panel-open'); };
 
 document.getElementById('btnGPS').onclick = function(){ if(!navigator.geolocation){ alert('Geolocalització no disponible.'); return; } navigator.geolocation.getCurrentPosition(function(pos){ map.setView([pos.coords.latitude, pos.coords.longitude], Math.max(map.getZoom(), 15)); }, function(err){ alert('No s\'ha pogut obtenir la posició: '+err.message); }, { enableHighAccuracy:true, timeout:8000 }); };
 
 document.getElementById('btnPrefetchTiles').onclick = prefetchTiles;
+
+// --- Override robust GPS handler ---
+document.getElementById('btnGPS').onclick = function(){
+  if(!navigator.geolocation){ alert('Geolocalització no disponible en aquest navegador.'); return; }
+  setStatus('Buscant posició…');
+  let cleared = false; let watchId = null; const done = (ok,msg)=>{ if(cleared) return; cleared = true; if(watchId!==null) navigator.geolocation.clearWatch(watchId); setStatus(msg|| (ok?'Posició obtinguda ✅':'No s\'ha pogut obtenir posició')); };
+  const opts = { enableHighAccuracy:true, timeout:10000, maximumAge:0 };
+  navigator.geolocation.getCurrentPosition(function(pos){
+    const latlng = [pos.coords.latitude, pos.coords.longitude];
+    map.setView(latlng, Math.max(map.getZoom(), 16));
+    if (!state.meMarker){ state.meMarker = L.circleMarker(latlng,{radius:7}).addTo(map).bindTooltip('Tu'); } else { state.meMarker.setLatLng(latlng); }
+    done(true,'Posició obtinguda ✅');
+  }, function(err){
+    watchId = navigator.geolocation.watchPosition(function(pos){
+      const latlng = [pos.coords.latitude, pos.coords.longitude];
+      map.setView(latlng, Math.max(map.getZoom(), 16));
+      if (!state.meMarker){ state.meMarker = L.circleMarker(latlng,{radius:7}).addTo(map).bindTooltip('Tu'); } else { state.meMarker.setLatLng(latlng); }
+      done(true,'Posició obtinguda ✅');
+    }, function(err2){
+      let reason = err2 && err2.message ? err2.message : (err && err.message ? err.message : 'Error desconegut');
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost') { reason += ' · Cal HTTPS o localhost per a geolocalització.'; }
+      alert('No s\'ha pogut obtenir la posició: '+ reason + '
+Revisa permisos de localització i dades mòbils.');
+      done(false);
+    }, Object.assign({}, opts, {timeout:15000}));
+  }, opts);
+};
 
 document.getElementById('btnSaveParcelLocal').onclick = saveParcelLocal;
 
@@ -328,4 +364,3 @@ const applyGeo = function(){ const txt=(document.getElementById('geojsonInput').
 </script>
 </body>
 </html>
-
