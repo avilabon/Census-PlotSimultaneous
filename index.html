@@ -18,10 +18,11 @@
     .pill { display:inline-block; padding:2px 6px; border-radius:999px; background:#f3f4f6; font-size:12px; margin-left:auto; }
     #map { height: 100%; width: 100%; position: relative; z-index: 0; }
 .leaflet-container { z-index: 0; }
+.leaflet-control-container { z-index: 10 !important; }
 /* Drawer per sobre del mapa */
-aside { z-index: 10010; }
+aside { z-index: 2147483647; transform: translateZ(0); }
 /* Fons per bloquejar interacció amb mapa quan el panell és obert */
-#backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.15); backdrop-filter: blur(1px); z-index: 10000; display: none; }
+#backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.15); backdrop-filter: blur(1px); z-index: 2147483000; display: none; }
 .panel-open #backdrop { display: block; }
 .panel-open #map { pointer-events: none; }
     aside { position: fixed; inset: 0 0 auto auto; width: 92vw; max-width: 440px; height: 100dvh; background:#fff; border-left:1px solid var(--border); box-shadow: -8px 0 24px rgba(0,0,0,.08); transform: translateX(100%); transition: transform .25s ease; display:flex; flex-direction:column; }
@@ -114,6 +115,7 @@ aside { z-index: 10010; }
         <label>Llista d'espècies (separades per comes)
           <textarea id="speciesList" rows="3" placeholder="Turdus merula, Parus major, ..."></textarea>
         </label>
+        <label style="display:flex;align-items:center;gap:8px; margin-top:10px"><input id="autoOpenPanel" type="checkbox" checked> Obre el panell després d'afegir un punt</label>
       </details>
 
       <details>
@@ -237,6 +239,8 @@ function addObservation(latlng){
       const marker = L.circleMarker(latlng, {radius:6}).addTo(map).bindTooltip((o.species||'sp.')+' ('+(o.count||1)+')');
       marker.on('click', function(){ if(confirm('Vols eliminar aquest punt?')) removeObservationById(id); });
       state.markers[id] = marker; refreshTable(); map.closePopup(popup);
+      // Obre el panell si l'usuari ho té activat
+      try { if (document.getElementById('autoOpenPanel') && document.getElementById('autoOpenPanel').checked){ document.getElementById('panel').classList.add('open'); document.body.classList.add('panel-open'); } } catch(_){}
     };
   }, 0);
 }
@@ -291,6 +295,8 @@ map.on('click', function(e){ if(state.parcelGeom && !insideParcel(e.latlng)){ al
 // --- Botons & panell ---
 document.getElementById('btnTogglePanel').onclick = function(){ document.getElementById('panel').classList.add('open'); document.body.classList.add('panel-open'); };
 (document.getElementById('btnClosePanel')).onclick = function(){ document.getElementById('panel').classList.remove('open'); document.body.classList.remove('panel-open'); };
+// Tancar el panell tocant el fons
+var __bd = document.getElementById('backdrop'); if (__bd){ __bd.addEventListener('click', function(){ document.getElementById('panel').classList.remove('open'); document.body.classList.remove('panel-open'); }); }
 
 document.getElementById('btnGPS').onclick = function(){ if(!navigator.geolocation){ alert('Geolocalització no disponible.'); return; } navigator.geolocation.getCurrentPosition(function(pos){ map.setView([pos.coords.latitude, pos.coords.longitude], Math.max(map.getZoom(), 15)); }, function(err){ alert('No s\'ha pogut obtenir la posició: '+err.message); }, { enableHighAccuracy:true, timeout:8000 }); };
 
