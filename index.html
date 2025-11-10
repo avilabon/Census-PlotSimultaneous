@@ -52,7 +52,14 @@ aside { z-index: 2147483647; transform: translateZ(0); position: fixed; top: 0; 
       #map { grid-column: 1 / 2; grid-row: 2 / 3; }
       aside { grid-column: 2 / 3; grid-row: 2 / 3; }
     }
-  </style>
+    /* Overrides per compatibilitat Android */
+  aside { position: fixed; top: 0; right: 0; bottom: 0; width: 92vw; max-width: 440px; background: #fff; transform: translateX(100%); transition: transform .25s ease; z-index: 2147483647; }
+  aside.open { transform: translateX(0); }
+  #backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.15); backdrop-filter: blur(1px); z-index: 2147483000; display: none; }
+  .panel-open #backdrop { display: block; }
+  .panel-open #map { pointer-events: none; }
+  .leaflet-control-container { z-index: 10 !important; }
+</style>
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#111827" />
 </head>
@@ -373,6 +380,50 @@ const applyGeo = function(){ const txt=(document.getElementById('geojsonInput').
 
 // --- PWA: registra SW (sw.js si existeix, sinó fallback) ---
 (function registerSW(){ if(!('serviceWorker' in navigator)) return; navigator.serviceWorker.register('sw.js').catch(function(){ var swCode= `const CACHE='birdcensus-cache-v1';self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil((async()=>{const c=await caches.open(CACHE);try{await c.addAll(['./','./index.html']);}catch(_){}})())});self.addEventListener('activate',e=>{e.waitUntil((async()=>{const ks=await caches.keys();await Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)));self.clients.claim();})())});self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith((async()=>{const c=await caches.open(CACHE);const m=await c.match(e.request);if(m) return m;try{const r=await fetch(e.request);if(r&&r.status===200&&r.type==='basic') c.put(e.request,r.clone());return r;}catch(err){return m||Response.error();}})())});`; var blob=new Blob([swCode],{type:'text/javascript'}); var url=URL.createObjectURL(blob); navigator.serviceWorker.register(url).catch(function(err){ console.warn('SW fallback KO', err); }); }); })();
+// --- Diagnòstic bàsic al mòbil ---
+(function(){
+  var logDiv = document.createElement('div');
+  logDiv.id = 'diag';
+  logDiv.style.cssText = 'position:fixed;left:8px;bottom:8px;max-width:70vw;background:rgba(17,24,39,.9);color:#fff;padding:6px 8px;border-radius:8px;font-size:12px;z-index:2147483600;display:none';
+  document.body.appendChild(logDiv);
+  function diag(msg){ try{ logDiv.style.display='block'; logDiv.textContent = msg; }catch(_){} }
+  window.addEventListener('error', function(e){ diag('JS error: '+ e.message); });
+  window.addEventListener('unhandledrejection', function(e){ diag('Promise error: '+ (e.reason && e.reason.message || e.reason)); });
+})();
+
+// --- Re-bind segur per a botons (compat mòbil) ---
+(function(){
+  function bind(){
+    var toggle = document.getElementById('btnTogglePanel');
+    var close = document.getElementById('btnClosePanel');
+    var backdrop = document.getElementById('backdrop');
+    if (toggle && !toggle.__bound){
+      toggle.__bound = true;
+      toggle.addEventListener('click', function(){
+        var p = document.getElementById('panel'); if(!p) return;
+        p.classList.add('open'); document.body.classList.add('panel-open');
+      });
+    }
+    if (close && !close.__bound){
+      close.__bound = true;
+      close.addEventListener('click', function(){
+        var p = document.getElementById('panel'); if(!p) return;
+        p.classList.remove('open'); document.body.classList.remove('panel-open');
+      });
+    }
+    if (backdrop && !backdrop.__bound){
+      backdrop.__bound = true;
+      backdrop.addEventListener('click', function(){
+        var p = document.getElementById('panel'); if(!p) return;
+        p.classList.remove('open'); document.body.classList.remove('panel-open');
+      });
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bind);
+  } else { bind(); }
+})();
+
 </script>
 </body>
 </html>
