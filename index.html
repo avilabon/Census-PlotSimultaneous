@@ -3,19 +3,21 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Cens d'ocells — Mode segur</title>
+  <title>Cens d'ocells — Mode segur + Observacions</title>
   <base href="./">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <style>
-    :root { --bg:#fff; --fg:#111827; --border:#e5e7eb; }
+    :root { --bg:#fff; --fg:#111827; --border:#e5e7eb; --muted:#6b7280; --accent:#2563eb; }
     html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
     #app { height:100%; display:grid; grid-template-rows:auto 1fr auto; }
     header { padding:10px 12px; border-bottom:1px solid var(--border); display:flex; gap:8px; align-items:center; }
     .btn { padding:8px 10px; border:1px solid var(--border); border-radius:10px; background:#fff; cursor:pointer; }
+    .btn.primary { background: var(--fg); color:#fff; }
+    .btn.danger { background:#b91c1c; color:#fff; }
     .pill { margin-left:auto; padding:2px 6px; border-radius:999px; background:#f3f4f6; font-size:12px; }
     #map { height:100vh; width:100%; position:relative; z-index:0; }
-    /* Drawer bàsic */
-    aside { position:fixed; top:0; right:0; bottom:0; width:92vw; max-width:440px; background:#fff; border-left:1px solid var(--border);
+    /* Drawer bàsic per sobre del mapa */
+    aside { position:fixed; top:0; right:0; bottom:0; width:92vw; max-width:460px; background:#fff; border-left:1px solid var(--border);
             transform:translateX(100%); transition:transform .25s ease; z-index:2147483647; display:flex; flex-direction:column; }
     aside.open { transform:translateX(0); }
     aside header { padding:10px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
@@ -25,7 +27,13 @@
     .panel-open #map, .panel-open .leaflet-container { pointer-events:none !important; }
     .leaflet-control-container { z-index: 10 !important; }
 
-    footer { padding:8px 12px; border-top:1px solid var(--border); font-size:12px; color:#6b7280; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #eee; text-align: left; padding: 6px 4px; font-size: 12px; }
+    .row-actions button { font-size:11px; padding:4px 6px; border-radius:8px; }
+    label { display:block; font-size:12px; color:#374151; margin-top:8px; }
+    input, select, textarea { width:100%; padding:8px; border:1px solid var(--border); border-radius:8px; }
+
+    footer { padding:8px 12px; border-top:1px solid var(--border); font-size:12px; color:var(--muted); }
     /* Diagnòstic */
     #diag { position:fixed; left:8px; bottom:8px; max-width:70vw; background:rgba(17,24,39,.9); color:#fff;
             padding:6px 8px; border-radius:8px; font-size:12px; z-index:2147483600; display:none; }
@@ -36,6 +44,8 @@
   <header>
     <button class="btn" id="btnTogglePanel">☰</button>
     <strong style="margin-left:4px">Cens d'ocells</strong>
+    <button class="btn" id="btnLoadParcelLocal" title="Carrega parcel·la desada">📂 Parcel·la</button>
+    <button class="btn" id="btnSaveParcelLocal" title="Desa parcel·la al dispositiu">💾 Parcel·la</button>
     <span class="pill" id="status">Mode segur</span>
   </header>
 
@@ -48,17 +58,71 @@
       <button class="btn" id="btnClosePanel">✕</button>
     </header>
     <div class="content">
-      <p>Aquest és un mode de diagnòstic minimal: si el mapa es veu i els botons responen, la base és correcta ✅.</p>
-      <p>Després afegirem la resta de funcionalitats (parcel·la, punts, exportacions, PWA) pas a pas.</p>
+      <div class="controls" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px">
+        <button class="btn" id="btnLoadParcel">Carrega parcel·la</button>
+        <button class="btn" id="btnRemoveParcel">Treure parcel·la</button>
+        <button class="btn" id="btnExportCSV">Exporta CSV</button>
+        <button class="btn" id="btnExportGeoJSON">Exporta GeoJSON</button>
+        <button class="btn" id="btnClear">Neteja observacions</button>
+        <button class="btn danger" id="btnDeleteAllPoints">Esborra tots els punts</button>
+      </div>
+
+      <h3 style="margin:6px 0 4px">Observacions</h3>
+      <div id="obsCount">0 registres</div>
+      <div style="max-height: 35vh; overflow:auto; border:1px solid #eee; border-radius:8px; padding:4px; margin-top:6px">
+        <table id="obsTable">
+          <thead>
+            <tr>
+              <th>Hora</th>
+              <th>Espècie</th>
+              <th>N</th>
+              <th>Lat</th>
+              <th>Lng</th>
+              <th>Fiabilitat</th>
+              <th>Accions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <details>
+        <summary>Configuració</summary>
+        <label>Identificador d'observador
+          <input id="observerId" placeholder="Ex: OBS-012" />
+        </label>
+        <label>Identificador de parcel·la
+          <input id="parcelId" placeholder="Ex: PARC-17A" />
+        </label>
+        <label>Llista d'espècies (separades per comes)
+          <textarea id="speciesList" rows="2" placeholder="Turdus merula, Parus major, ..."></textarea>
+        </label>
+      </details>
+
+      <details open>
+        <summary>Carrega parcel·la (GeoJSON)</summary>
+        <label>Enganxa GeoJSON (Polygon o MultiPolygon)
+          <textarea id="geojsonInput" rows="6" placeholder='{"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[...]]}}'></textarea>
+        </label>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button class="btn" id="btnApplyGeoJSON">Dibuixa</button>
+          <button class="btn" id="btnExampleHex">Hexàgon de prova (Puigmal)</button>
+        </div>
+      </details>
+
+      <details>
+        <summary>Tests</summary>
+        <div id="testOutput" class="tests"></div>
+      </details>
     </div>
   </aside>
 
-  <footer>Si veus el mapa i el panell s'obre/tanca, ja tenim la base OK.</footer>
+  <footer>Mapa i panell funcionen. Ara tens: parcel·la, punts, taula, exportacions. Fes clic al mapa per afegir una observació.</footer>
 </div>
 
 <div id="diag"></div>
 
-<!-- Leaflet JS al final perquè no falli per ordre de càrrega -->
+<!-- Leaflet JS al final -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
@@ -69,29 +133,175 @@
   window.addEventListener('error', e => diag('JS error: ' + e.message));
   window.addEventListener('unhandledrejection', e => diag('Promise error: ' + (e.reason && e.reason.message || e.reason)));
 
+  function setStatus(msg){ var el=document.getElementById('status'); if(el) el.textContent = msg; }
+  function nullSafe(v){ return (v === undefined || v === null) ? '' : v; }
+  function uid(){ try { if (crypto && typeof crypto.randomUUID==='function') return crypto.randomUUID(); } catch(_){} return Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10); }
+
+  // Estat
+  const state = {
+    parcel: null,
+    parcelGeom: null,
+    observations: (function(){ try { return JSON.parse(localStorage.getItem('observations')||'[]'); } catch(e){ return []; } })(),
+    markers: {}
+  };
+
+  // Mapa
+  let map;
   try {
-    // Inicia el mapa
-    const map = L.map('map', { zoomControl: true });
+    map = L.map('map', { zoomControl: true });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
     map.setView([41.387, 2.170], 12);
-
-    // Drawer handlers molt simples i robustos
-    var panel = document.getElementById('panel');
-    document.getElementById('btnTogglePanel').addEventListener('click', function(){
-      panel.classList.add('open'); document.body.classList.add('panel-open');
-    }, {passive:true});
-    document.getElementById('btnClosePanel').addEventListener('click', function(){
-      panel.classList.remove('open'); document.body.classList.remove('panel-open');
-    }, {passive:true});
-    document.getElementById('backdrop').addEventListener('click', function(){
-      panel.classList.remove('open'); document.body.classList.remove('panel-open');
-    }, {passive:true});
   } catch (e) {
-    diag('Init error: ' + e.message);
+    diag('Init map error: ' + e.message);
+    return;
   }
+
+  // Drawer handlers
+  (function bindDrawer(){
+    var panel = document.getElementById('panel');
+    document.getElementById('btnTogglePanel').addEventListener('click', function(){ panel.classList.add('open'); document.body.classList.add('panel-open'); }, {passive:true});
+    document.getElementById('btnClosePanel').addEventListener('click', function(){ panel.classList.remove('open'); document.body.classList.remove('panel-open'); }, {passive:true});
+    document.getElementById('backdrop').addEventListener('click', function(){ panel.classList.remove('open'); document.body.classList.remove('panel-open'); }, {passive:true});
+  })();
+
+  // Utilitats
+  function fmtTime(ts){ const d = new Date(ts); try { return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}); } catch(e){ return d.toTimeString().slice(0,8); } }
+  function updateStorage(){ try { localStorage.setItem('observations', JSON.stringify(state.observations)); } catch(e){} }
+
+  function renderRow(o){
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>'+fmtTime(o.timestamp)+'</td>'+
+                   '<td>'+ (o.species || '') +'</td>'+
+                   '<td>'+ (o.count || '') +'</td>'+
+                   '<td>'+ o.lat.toFixed(5) +'</td>'+
+                   '<td>'+ o.lng.toFixed(5) +'</td>'+
+                   '<td>'+ (o.confidence || '') +'</td>'+
+                   '<td class="row-actions">\n                   <button data-action="zoom" data-id="'+o.id+'">Zoom</button>\n                   <button data-action="delete" data-id="'+o.id+'" class="btn danger">Elimina</button>\n                 </td>';
+    return tr;
+  }
+
+  function refreshTable(){
+    const tbody = document.querySelector('#obsTable tbody');
+    tbody.innerHTML = '';
+    for (var i=0; i<state.observations.length; i++){
+      var o = state.observations[i];
+      tbody.appendChild(renderRow(o));
+    }
+    document.getElementById('obsCount').textContent = state.observations.length + ' registres';
+    updateStorage();
+  }
+
+  document.querySelector('#obsTable').addEventListener('click', function(ev){
+    var t = ev.target; var id = t.getAttribute('data-id'); var act = t.getAttribute('data-action'); if(!id||!act) return;
+    if(act==='delete'){ removeObservationById(id); }
+    if(act==='zoom'){ var m=state.markers[id]; if(m){ map.setView(m.getLatLng(), Math.max(map.getZoom(), 17)); m.openTooltip(); } }
+  });
+
+  function pointInPoly(point, vs){ const x=point[0], y=point[1]; let inside=false; for(let i=0,j=vs.length-1;i<vs.length;j=i++){
+    const xi=vs[i][0], yi=vs[i][1]; const xj=vs[j][0], yj=vs[j][1]; const intersect=((yi>y)!==(yj>y)) && (x< (xj-xi)*(y-yi)/(yj-yi)+xi); if(intersect) inside=!inside; }
+    return inside; }
+
+  function insideParcel(latlng){
+    if(!state.parcelGeom) return true;
+    const g = state.parcelGeom; const p=[latlng.lng, latlng.lat];
+    if(g.type==='Polygon'){ return pointInPoly(p, g.coordinates[0]); }
+    if(g.type==='MultiPolygon'){ for(var k=0;k<g.coordinates.length;k++){ if(pointInPoly(p, g.coordinates[k][0])) return true; } return false; }
+    return true;
+  }
+
+  function addObservation(latlng){
+    const speciesOptions = (document.getElementById('speciesList').value||'').split(',').map(function(s){return s.trim();}).filter(function(x){return !!x;});
+    const speciesSelect = speciesOptions.length ? '<label>Espècie<select id="fSpecies">'+ speciesOptions.map(function(s){return '<option>'+s+'</option>';}).join('') +'</select></label>' : '<label>Espècie<input id="fSpeciesInput" placeholder="Espècie" /></label>';
+
+    const popup = L.popup({offset:[0,-10]})
+      .setLatLng(latlng)
+      .setContent(
+        '<div style="min-width:260px">'+
+        speciesSelect+
+        '<label>N individus<input id="fCount" type="number" min="1" step="1" value="1"/></label>'+
+        '<label>Fiabilitat<select id="fConfidence"><option>segur</option><option>probable</option><option>possible</option></select></label>'+
+        '<label>Notes<textarea id="fNotes" rows="2"></textarea></label>'+
+        '<div style="display:flex; gap:8px; margin-top:8px">'+
+        '<button class="btn primary" id="fSave">Desa</button>'+
+        '<button class="btn" id="fCancel">Cancel·la</button>'+
+        '</div></div>'
+      ).openOn(map);
+
+    setTimeout(function(){
+      document.getElementById('fCancel').onclick = function(){ map.closePopup(popup); };
+      document.getElementById('fSave').onclick = function(){
+        const id = uid();
+        const species = speciesOptions.length ? document.getElementById('fSpecies').value : document.getElementById('fSpeciesInput').value;
+        const o = {
+          id,
+          observerId: document.getElementById('observerId').value||null,
+          parcelId: document.getElementById('parcelId').value||null,
+          species: species||null,
+          count: Number(document.getElementById('fCount').value)||null,
+          confidence: document.getElementById('fConfidence').value||null,
+          notes: document.getElementById('fNotes').value||null,
+          lat: latlng.lat, lng: latlng.lng,
+          timestamp: Date.now(), crs:'EPSG:4326', device: navigator.userAgent
+        };
+        state.observations.push(o);
+        const marker = L.circleMarker(latlng, {radius:6}).addTo(map).bindTooltip((o.species||'sp.')+' ('+(o.count||1)+')');
+        marker.on('click', function(){ if(confirm('Vols eliminar aquest punt?')) removeObservationById(id); });
+        state.markers[id] = marker; refreshTable(); map.closePopup(popup);
+      };
+    }, 0);
+  }
+
+  function removeObservationById(id){
+    const idx = state.observations.findIndex(function(x){ return x.id===id; }); if(idx!==-1) state.observations.splice(idx,1);
+    const m = state.markers[id]; if(m){ map.removeLayer(m); delete state.markers[id]; }
+    refreshTable();
+  }
+
+  // Click al mapa
+  map.on('click', function(e){ if(state.parcelGeom && !insideParcel(e.latlng)){ alert("El punt ha d'estar dins de la parcel·la."); return; } addObservation(e.latlng); });
+
+  // Parcel·la
+  function drawParcel(feature){ if(state.parcel){ map.removeLayer(state.parcel); }
+    state.parcelGeom = feature.geometry; state.parcel = L.geoJSON(feature, {style:{color:'#2563eb', weight:2, fillOpacity:0.05}}).addTo(map); try{ map.fitBounds(state.parcel.getBounds(), {padding:[20,20]}); }catch(_){}}
+  function removeParcel(){ if(state.parcel){ map.removeLayer(state.parcel); state.parcel=null; } state.parcelGeom=null; }
+
+  function saveParcelLocal(){ if(!state.parcelGeom){ alert('No hi ha parcel·la carregada.'); return; } try{ localStorage.setItem('parcelGeom', JSON.stringify(state.parcelGeom)); alert('Parcel·la desada al dispositiu.'); }catch(e){ alert('No s\'ha pogut desar: '+e.message); } }
+  function loadParcelLocal(){ try{ const txt = localStorage.getItem('parcelGeom'); if(!txt){ alert('No hi ha cap parcel·la desada.'); return; } const geom = JSON.parse(txt); drawParcel({type:'Feature', properties:{}, geometry: geom}); }catch(e){ alert('No s\'ha pogut carregar: '+e.message); } }
+
+  // Exemple hexàgon Puigmal
+  function exampleHex(){
+    const f = {"type":"Feature","properties":{"name":"Puigmal - Hexàgon"},"geometry":{"type":"Polygon","coordinates":[[
+      [2.162416, 42.394000], [2.159708, 42.397464], [2.154292, 42.397464], [2.151584, 42.394000], [2.154292, 42.390536], [2.159708, 42.390536], [2.162416, 42.394000]
+    ]]}};
+    drawParcel(f);
+  }
+
+  // Export
+  function toCSV(rows){ const header = Object.keys(rows[0]||{observerId:'',parcelId:'',species:'',count:'',confidence:'',notes:'',lat:'',lng:'',timestamp:'',crs:'',device:''}); return [header.join(',')]
+    .concat(rows.map(function(r){ return header.map(function(k){ return JSON.stringify(nullSafe(r[k])); }).join(','); }))
+    .join('\n'); }
+  function download(filename, content, mime){ try{ const blob=new Blob([content],{type:mime||'application/octet-stream'}); if(navigator.msSaveOrOpenBlob){ navigator.msSaveOrOpenBlob(blob, filename); return true; } const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.style.display='none'; a.href=url; a.setAttribute('download',filename); document.body.appendChild(a); a.click(); setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); },0); return true; } catch(err){ try{ const text=(typeof content==='string')?content:String(content); if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(function(){ alert('No s\'ha pogut descarregar. Copiat al porta-retalls. Desa-ho com a '+filename); }); return false; } }catch(_){} const win=window.open('', '_blank'); if(win){ win.document.open(); const escaped=String(content).replace(/[&<>]/g, function(s){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[s]; }); win.document.write('<pre>'+escaped+'</pre>'); win.document.close(); alert('S\'ha obert en una pestanya nova. Desa-ho manualment com "'+filename+'".'); } else { alert('No s\'ha pogut exportar. Comprova bloqueig de baixades o emergents.'); } return false; } }
+
+  // Botons
+  document.getElementById('btnApplyGeoJSON').addEventListener('click', function(){ const txt=(document.getElementById('geojsonInput').value||'').trim(); if(!txt){ alert('Enganxa el GeoJSON de la parcel·la.'); return; } let feat=null; try{ const obj=JSON.parse(txt); feat = obj.type==='Feature'? obj : {type:'Feature', properties:{}, geometry: obj}; if(!feat.geometry || (['Polygon','MultiPolygon'].indexOf(feat.geometry.type)===-1)) throw new Error('Ha de ser Polygon o MultiPolygon'); }catch(e){ alert('GeoJSON no vàlid: '+e.message); return; } drawParcel(feat); });
+  document.getElementById('btnExampleHex').addEventListener('click', exampleHex);
+  document.getElementById('btnLoadParcel').addEventListener('click', function(){ document.getElementById('geojsonInput').focus(); document.getElementById('panel').classList.add('open'); document.body.classList.add('panel-open'); });
+  document.getElementById('btnRemoveParcel').addEventListener('click', function(){ if(!confirm('Treure la parcel·la actual?')) return; removeParcel(); });
+  document.getElementById('btnSaveParcelLocal').addEventListener('click', saveParcelLocal);
+  document.getElementById('btnLoadParcelLocal').addEventListener('click', loadParcelLocal);
+
+  document.getElementById('btnExportCSV').addEventListener('click', function(){ if(state.observations.length===0) return alert('No hi ha dades.'); download('cens_'+ new Date().toISOString().slice(0,10) + '.csv', toCSV(state.observations), 'text/csv'); });
+  document.getElementById('btnExportGeoJSON').addEventListener('click', function(){ const fc={ type:'FeatureCollection', features: state.observations.map(function(o){return ({ type:'Feature', properties:Object.assign({}, o), geometry:{ type:'Point', coordinates:[o.lng,o.lat] } });}) }; download('cens_'+ new Date().toISOString().slice(0,10) + '.geojson', JSON.stringify(fc), 'application/geo+json'); });
+
+  document.getElementById('btnClear').addEventListener('click', function(){ if(!confirm('Segur que vols esborrar totes les observacions locals?')) return; Object.keys(state.markers).forEach(function(id){ map.removeLayer(state.markers[id]); }); state.markers={}; state.observations=[]; refreshTable(); });
+  document.getElementById('btnDeleteAllPoints').addEventListener('click', function(){ if(!confirm('Vols eliminar TOTS els punts d\'espècies?')) return; Object.keys(state.markers).forEach(function(id){ map.removeLayer(state.markers[id]); }); state.markers={}; state.observations=[]; refreshTable(); });
+
+  // Init
+  refreshTable();
+  setStatus('Llest ✅');
 })();
 </script>
 
-<!-- IMPORTANT: no registrem cap Service Worker en mode segur -->
+<!-- IMPORTANT: sense Service Worker de moment -->
 </body>
 </html>
